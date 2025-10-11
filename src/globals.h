@@ -1,6 +1,8 @@
 #ifndef __GLOBALS_H__
 #define __GLOBALS_H__ 1
 
+#include <signal.h>
+
 #ifdef DEFINE_GLOBALS
 # define GLOBAL0(A) A
 # define GLOBAL(A, B) A = B
@@ -33,4 +35,8 @@ GLOBAL(int syslog_facility, DEFAULT_FACILITY);
 GLOBAL0(char *vaddr_arg);
 GLOBAL0(char *xparam);
 GLOBAL0(sig_atomic_t received_signal);
+/* Transport selection and TCP params */
+GLOBAL0(signed char use_tcp_transport);
+GLOBAL0(struct in_addr peerip);
+GLOBAL(unsigned short tcp_port, 0);
 #endif

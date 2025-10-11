@@ -54,6 +54,15 @@
 #ifndef __IP_CARP_H__
 #define __IP_CARP_H__ 1
 
+/* Define packed attribute macro if not provided */
+#ifndef __packed
+# ifdef __GNUC__
+#  define __packed __attribute__((__packed__))
+# else
+#  define __packed
+# endif
+#endif
+
 struct carp_header {
 #ifdef WORDS_BIGENDIAN
         u_int8_t        carp_version:4,

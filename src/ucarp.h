@@ -113,6 +113,10 @@ extern int errno;
 #ifndef __GNUC__
 # define __packed__
 #endif
+/* Ensure ip_carp.h's __packed token is defined on non-GNU compilers */
+#ifndef __packed
+# define __packed
+#endif
 
 #define ETHERNET_MTU 1500
 #ifndef ETHER_ADDR_LEN
@@ -213,6 +217,9 @@ struct carp_softc {
 #define DEFAULT_DEAD_RATIO 3U
 #define DEFAULT_MCASTIP "224.0.0.18"
 #define SECONDS_TO_WAIT_AFTER_INTERFACE_IS_DOWN 10U
+
+/* TCP transport defaults */
+#define DEFAULT_TCP_PORT 9455
 
 #define DEFAULT_FACILITY LOG_DAEMON
 

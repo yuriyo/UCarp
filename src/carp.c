@@ -43,6 +43,8 @@
 #include "spawn.h"
 #include "log.h"
 #include "carp_p.h"
+#include "transport.h"
+#include "carp_api.h"
 
 #ifdef WITH_DMALLOC
 # include <dmalloc.h>
@@ -270,18 +272,26 @@ static void carp_send_ad(struct carp_softc *sc)
     }
     eh.ether_type = htons(ETHERTYPE_IP);
 
-    memcpy(pkt, &eh, sizeof eh);
-    memcpy(pkt + sizeof eh, &ip, sizeof ip);
-    memcpy(pkt + sizeof ip + sizeof eh, &ch, sizeof ch);
+    if (use_tcp_transport) {
+        /* Delegate sending to transport */
+        rc = ucarp_transport->send_advert(&ch);
+        if (rc < 0) {
+            logfile(LOG_WARNING, _("tcp send failed"));
+        }
+    } else {
+        memcpy(pkt, &eh, sizeof eh);
+        memcpy(pkt + sizeof eh, &ip, sizeof ip);
+        memcpy(pkt + sizeof ip + sizeof eh, &ch, sizeof ch);
 
-    ip_ptr = pkt + sizeof eh;
-    sum = cksum(ip_ptr, ip_len);
-    ip_ptr[offsetof(struct ip, ip_sum)] = (sum >> 8) & 0xff;
-    ip_ptr[offsetof(struct ip, ip_sum) + 1] = sum & 0xff;
+        ip_ptr = pkt + sizeof eh;
+        sum = cksum(ip_ptr, ip_len);
+        ip_ptr[offsetof(struct ip, ip_sum)] = (sum >> 8) & 0xff;
+        ip_ptr[offsetof(struct ip, ip_sum) + 1] = sum & 0xff;
 
-    do {
-        rc = write(dev_desc_fd, pkt, eth_len);
-    } while (rc < 0 && errno == EINTR);
+        do {
+            rc = write(dev_desc_fd, pkt, eth_len);
+        } while (rc < 0 && errno == EINTR);
+    }
     if (rc < 0) {
         logfile(LOG_WARNING, _("write() has failed: %s"), strerror(errno));
         if (sc->sc_sendad_errors < INT_MAX) {
@@ -490,10 +500,12 @@ static void packethandler(unsigned char *dummy,
                     (unsigned int) ch.carp_vhid);
             return;
         }
-        if (iphead.ip_dst.s_addr != mcastip.s_addr) {
-            logfile(LOG_DEBUG, _("Ignoring different multicast ip: [%s]"),
-                    inet_ntoa(iphead.ip_dst));
-            return;
+        if (!use_tcp_transport) {
+            if (iphead.ip_dst.s_addr != mcastip.s_addr) {
+                logfile(LOG_DEBUG, _("Ignoring different multicast ip: [%s]"),
+                        inet_ntoa(iphead.ip_dst));
+                return;
+            }
         }
         if (cksum(sp, ip_len + sizeof ch) != 0) {
             logfile(LOG_WARNING, _("Bad IP checksum"));
@@ -630,6 +642,76 @@ static void packethandler(unsigned char *dummy,
     }
 }
 
+void carp_process_advert_from_ch(const struct carp_header *ch,
+                                 struct in_addr src_ip)
+{
+    unsigned long long tmp_counter;
+    struct timeval sc_tv;
+    struct timeval ch_tv;
+
+    if (ch->carp_version != CARP_VERSION) return;
+    if (ch->carp_vhid != vhid) return;
+
+    SHA1_CTX ctx; unsigned char md2[20];
+    memcpy(&ctx, &sc.sc_sha1, sizeof ctx);
+    SHA1Update(&ctx, (void *)&ch->carp_counter, sizeof ch->carp_counter);
+    SHA1Final(md2, &ctx);
+    SHA1Init(&ctx);
+    SHA1Update(&ctx, sc.sc_pad, sizeof(sc.sc_pad));
+    SHA1Update(&ctx, md2, sizeof md2);
+    SHA1Final(md2, &ctx);
+    if (memcmp(md2, ch->carp_md, sizeof md2) != 0) {
+        return;
+    }
+
+    tmp_counter = ntohl(ch->carp_counter[0]);
+    tmp_counter = tmp_counter << 32;
+    tmp_counter += ntohl(ch->carp_counter[1]);
+    sc.sc_init_counter = 0;
+    sc.sc_counter = tmp_counter;
+
+    sc_tv.tv_sec = (unsigned int) sc.sc_advbase;
+    if (carp_suppress_preempt != 0 && sc.sc_advskew < CARP_BULK_UPDATE_MIN_DELAY) {
+        sc_tv.tv_usec = (unsigned int)
+            (CARP_BULK_UPDATE_MIN_DELAY * 1000000ULL / 256ULL);
+    } else {
+        sc_tv.tv_usec = (unsigned int)
+            (sc.sc_advskew * 1000000ULL / 256ULL);
+    }
+    ch_tv.tv_sec = (unsigned int) ch->carp_advbase;
+    ch_tv.tv_usec = (unsigned int)
+        (ch->carp_advskew * 1000000ULL / 256ULL);
+
+    switch (sc.sc_state) {
+    case INIT:
+        break;
+    case MASTER:
+        if (timercmp(&sc_tv, &ch_tv, >) ||
+            (timercmp(&sc_tv, &ch_tv, ==) && src_ip.s_addr < srcip.s_addr)) {
+            carp_send_ad(&sc);
+            carp_set_state(&sc, BACKUP);
+            carp_setrun(&sc, 0);
+        } else if (timercmp(&sc_tv, &ch_tv, <) ||
+                   (timercmp(&sc_tv, &ch_tv, ==) && src_ip.s_addr > srcip.s_addr)) {
+            gratuitous_arp(dev_desc_fd);
+            sc.sc_delayed_arp = 2;
+        }
+        break;
+    case BACKUP:
+        if (preempt != 0 && timercmp(&sc_tv, &ch_tv, <)) {
+            carp_master_down(&sc);
+            break;
+        }
+        sc_tv.tv_sec = (unsigned int) sc.sc_advbase * dead_ratio;
+        if (timercmp(&sc_tv, &ch_tv, <)) {
+            carp_master_down(&sc);
+            break;
+        }
+        carp_setrun(&sc, AF_INET);
+        break;
+    }
+}
+
 static RETSIGTYPE sighandler_exit(const int sig)
 {
     received_signal=15;
@@ -688,13 +770,16 @@ int docarp(void)
 #endif /* INET6 */
     carp_set_state(&sc, INIT);
     {
-        const size_t passlen = strlen(pass) + (size_t) 1U;
-
-        if (passlen > sizeof sc.sc_key) {
-            logfile(LOG_ERR, _("Password too long"));
+        const size_t passlen = strlen(pass);
+        if (passlen > 64U) {
+            logfile(LOG_ERR, _("Password too long (max 64)"));
             return -1;
         }
-        memcpy(sc.sc_key, pass, passlen);
+        /* Hash passphrase to fixed 20-byte key */
+        SHA1_CTX kctx;
+        SHA1Init(&kctx);
+        SHA1Update(&kctx, (const unsigned char *) pass, (unsigned int) passlen);
+        SHA1Final(sc.sc_key, &kctx);
     }
     sc.sc_ad_tmo.tv_sec = 0;
     sc.sc_ad_tmo.tv_usec = 0;
@@ -702,6 +787,12 @@ int docarp(void)
     sc.sc_md6_tmo.tv_usec = 0;
 
     carp_hmac_prepare(&sc);
+
+    /* Select and initialize transport (raw by default; tcp if enabled) */
+    if (transport_select() != 0) {
+        logfile(LOG_ERR, _("Transport initialization failed"));
+        return -1;
+    }
 
     if (fill_mac_address() != 0) {
         logfile(LOG_ERR, _("Unable to find MAC address of [%s]"),
@@ -789,7 +880,7 @@ int docarp(void)
                 interface == NULL ? "-" : interface, strerror(errno));
         return -1;
     }
-    if (!no_mcast) {
+    if (!no_mcast && !use_tcp_transport) {
         memset(&req_add, 0, sizeof req_add);
         req_add.imr_multiaddr.s_addr = mcastip.s_addr;
         req_add.imr_interface.s_addr = srcip.s_addr;
@@ -876,7 +967,13 @@ int docarp(void)
             poll_sleep_time = (time_until_advert.tv_sec * 1000) +
                 (time_until_advert.tv_usec / 1000);
         }
-        nfds = poll(pfds, (nfds_t) 1, MAX(1, poll_sleep_time));
+        if (use_tcp_transport) {
+            /* Allow TCP transport to process frames while we wait */
+            (void) ucarp_transport->poll_recv(MAX(1, poll_sleep_time));
+            nfds = poll(pfds, (nfds_t) 1, 1);
+        } else {
+            nfds = poll(pfds, (nfds_t) 1, MAX(1, poll_sleep_time));
+        }
         if (nfds == -1) {
             if (errno == EINTR) {
                continue;

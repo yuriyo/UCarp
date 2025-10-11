@@ -43,6 +43,9 @@ static void usage(void)
         "--daemonize (-B): run in background\n"
         "--ignoreifstate (-S): ignore interface state (down, no carrier)\n"
         "--nomcast (-M): use broadcast (instead of multicast) advertisements\n"
+        "--transport=<tcp|raw> (-T <name>): select transport (default raw)\n"
+        "--peer=<ip[:port]> (-E <ip>[:port]): peer address for TCP transport\n"
+        "--tcp-port=<port>: TCP listening port (default 9455)\n"
         "--facility=<facility> (-f): set syslog facility (default=daemon)\n"
         "--xparam=<value> (-x): extra parameter to send to up/down scripts\n"
         "\n"
@@ -103,6 +106,48 @@ int main(int argc, char *argv[])
     while ((fodder = getopt_long(argc, argv, GETOPT_OPTIONS, long_options,
                                  &option_index)) != -1) {
         switch (fodder) {
+        case 'T': {
+            if (strcasecmp(optarg, "tcp") == 0) {
+                use_tcp_transport = 1;
+            } else if (strcasecmp(optarg, "raw") == 0) {
+                use_tcp_transport = 0;
+            } else {
+                logfile(LOG_ERR, _("Unknown transport: [%s]"), optarg);
+                return 1;
+            }
+            break;
+        }
+        case 'E': {
+            char *colon = strchr(optarg, ':');
+            if (colon != NULL) {
+                *colon = 0;
+                if (inet_pton(AF_INET, optarg, &peerip) == 0) {
+                    logfile(LOG_ERR, _("Invalid peer ip: [%s]"), optarg);
+                    return 1;
+                }
+                unsigned long p = strtoul(colon + 1, NULL, 10);
+                if (p == 0 || p > 65535) {
+                    logfile(LOG_ERR, _("Invalid TCP port: [%s]"), colon + 1);
+                    return 1;
+                }
+                tcp_port = (unsigned short) p;
+            } else {
+                if (inet_pton(AF_INET, optarg, &peerip) == 0) {
+                    logfile(LOG_ERR, _("Invalid peer ip: [%s]"), optarg);
+                    return 1;
+                }
+            }
+            break;
+        }
+        case 1001: {
+            unsigned long p = strtoul(optarg, NULL, 10);
+            if (p == 0 || p > 65535) {
+                logfile(LOG_ERR, _("Invalid TCP port: [%s]"), optarg);
+                return 1;
+            }
+            tcp_port = (unsigned short) p;
+            break;
+        }
         case 'h': {
             usage();
         }
@@ -294,6 +339,15 @@ int main(int argc, char *argv[])
     if (vaddr.s_addr == 0) {
         logfile(LOG_ERR, _("You must supply a virtual host address"));
         return 1;
+    }
+    if (use_tcp_transport) {
+        if (peerip.s_addr == 0) {
+            logfile(LOG_ERR, _("You must supply --peer for TCP transport"));
+            return 1;
+        }
+        if (tcp_port == 0) {
+            tcp_port = DEFAULT_TCP_PORT;
+        }
     }
     if (upscript == NULL) {
         logfile(LOG_WARNING, _("Warning: no script called when going up"));
