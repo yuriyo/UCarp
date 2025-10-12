@@ -11,6 +11,7 @@ on:
       - main
       - master
       - develop
+      - feature/tcp_mesh  # Allow testing on this feature branch
 
 jobs:
   test-debian:
