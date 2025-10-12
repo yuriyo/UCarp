@@ -91,20 +91,18 @@ jobs:
 
       - name: Build CentOS 7 base
         run: |
-          docker buildx build \
+          docker build \
             --platform=linux/amd64 \
             -f Dockerfile.centos7-base \
             -t centos7-vault:latest \
-            --load \
             .
 
       - name: Build and test CentOS 7
         run: |
-          docker buildx build \
+          docker build \
             --platform=linux/amd64 \
             -f Dockerfile.centos7 \
             -t ucarp:centos7-test \
-            --load \
             .
 
       - name: Test binary

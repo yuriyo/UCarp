@@ -165,21 +165,19 @@ jobs:
 
       - name: Build CentOS 7 base image
         run: |
-          docker buildx build \
+          docker build \
             --platform=linux/amd64 \
             -f Dockerfile.centos7-base \
             -t centos7-vault:latest \
-            --load \
             .
 
       - name: Build CentOS 7 binary
         run: |
-          docker buildx build \
+          docker build \
             --platform=linux/amd64 \
             --target=build \
             -f Dockerfile.centos7 \
             -t ucarp-centos7-build \
-            --load \
             .
 
       - name: Extract binary
