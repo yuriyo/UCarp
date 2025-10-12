@@ -4,6 +4,11 @@
 
 FROM rockylinux:9 AS build
 
+# Enable CRB repository for development packages
+RUN dnf -y install dnf-plugins-core && \
+    dnf config-manager --set-enabled crb && \
+    dnf -y update
+
 # Install build dependencies
 RUN dnf -y install \
     gcc gcc-c++ make autoconf automake libtool pkgconfig \
