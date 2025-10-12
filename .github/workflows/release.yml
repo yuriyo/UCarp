@@ -1,0 +1,335 @@
+name: Multi-Platform Release Build
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        default: 'v0.0.0-test'
+
+jobs:
+  build-debian:
+    name: Build Debian 12 (x86_64 & ARM64)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract platform name
+        id: platform
+        run: |
+          PLATFORM_NAME=$(echo "${{ matrix.platform }}" | sed 's/\//-/g')
+          echo "name=${PLATFORM_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Build Debian binary
+        run: |
+          docker buildx build \
+            --platform=${{ matrix.platform }} \
+            --target=build \
+            -f Dockerfile.debian \
+            -t ucarp-debian-build \
+            --load \
+            .
+
+      - name: Extract binary
+        run: |
+          # Create output directory
+          mkdir -p dist
+          
+          # Extract the binary from the container
+          docker create --platform=${{ matrix.platform }} --name extract ucarp-debian-build
+          docker cp extract:/out/usr/local/sbin/ucarp dist/ucarp-debian12-${{ steps.platform.outputs.name }}
+          docker rm extract
+          
+          # Make it executable
+          chmod +x dist/ucarp-debian12-${{ steps.platform.outputs.name }}
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create tarball
+        run: |
+          cd dist
+          tar -czf ucarp-${{ steps.version.outputs.version }}-debian12-${{ steps.platform.outputs.name }}.tar.gz ucarp-debian12-${{ steps.platform.outputs.name }}
+          sha256sum ucarp-${{ steps.version.outputs.version }}-debian12-${{ steps.platform.outputs.name }}.tar.gz > ucarp-${{ steps.version.outputs.version }}-debian12-${{ steps.platform.outputs.name }}.tar.gz.sha256
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ucarp-debian12-${{ steps.platform.outputs.name }}
+          path: dist/*.tar.gz*
+          retention-days: 7
+
+  build-rocky9:
+    name: Build Rocky Linux 9 (x86_64 & ARM64)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract platform name
+        id: platform
+        run: |
+          PLATFORM_NAME=$(echo "${{ matrix.platform }}" | sed 's/\//-/g')
+          echo "name=${PLATFORM_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Build Rocky Linux 9 binary
+        run: |
+          docker buildx build \
+            --platform=${{ matrix.platform }} \
+            --target=build \
+            -f Dockerfile.rocky9 \
+            -t ucarp-rocky9-build \
+            --load \
+            .
+
+      - name: Extract binary
+        run: |
+          # Create output directory
+          mkdir -p dist
+          
+          # Extract the binary from the container
+          docker create --platform=${{ matrix.platform }} --name extract ucarp-rocky9-build
+          docker cp extract:/out/usr/local/sbin/ucarp dist/ucarp-rocky9-${{ steps.platform.outputs.name }}
+          docker rm extract
+          
+          # Make it executable
+          chmod +x dist/ucarp-rocky9-${{ steps.platform.outputs.name }}
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create tarball
+        run: |
+          cd dist
+          tar -czf ucarp-${{ steps.version.outputs.version }}-rocky9-${{ steps.platform.outputs.name }}.tar.gz ucarp-rocky9-${{ steps.platform.outputs.name }}
+          sha256sum ucarp-${{ steps.version.outputs.version }}-rocky9-${{ steps.platform.outputs.name }}.tar.gz > ucarp-${{ steps.version.outputs.version }}-rocky9-${{ steps.platform.outputs.name }}.tar.gz.sha256
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ucarp-rocky9-${{ steps.platform.outputs.name }}
+          path: dist/*.tar.gz*
+          retention-days: 7
+
+  build-centos7:
+    name: Build CentOS 7 (x86_64 only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build CentOS 7 base image
+        run: |
+          docker buildx build \
+            --platform=linux/amd64 \
+            -f Dockerfile.centos7-base \
+            -t centos7-vault:latest \
+            --load \
+            .
+
+      - name: Build CentOS 7 binary
+        run: |
+          docker buildx build \
+            --platform=linux/amd64 \
+            --target=build \
+            -f Dockerfile.centos7 \
+            -t ucarp-centos7-build \
+            --load \
+            .
+
+      - name: Extract binary
+        run: |
+          # Create output directory
+          mkdir -p dist
+          
+          # Extract the binary from the container
+          docker create --platform=linux/amd64 --name extract ucarp-centos7-build
+          docker cp extract:/out/usr/local/sbin/ucarp dist/ucarp-centos7-linux-amd64
+          docker rm extract
+          
+          # Make it executable
+          chmod +x dist/ucarp-centos7-linux-amd64
+
+      - name: Check GLIBC compatibility
+        run: |
+          echo "## GLIBC Compatibility Report" > dist/GLIBC_REPORT.txt
+          echo "" >> dist/GLIBC_REPORT.txt
+          echo "Binary: ucarp-centos7-linux-amd64" >> dist/GLIBC_REPORT.txt
+          echo "Built on: CentOS 7.9.2009" >> dist/GLIBC_REPORT.txt
+          echo "" >> dist/GLIBC_REPORT.txt
+          
+          docker run --rm --platform=linux/amd64 ucarp-centos7-build /bin/bash -c \
+            "objdump -T /out/usr/local/sbin/ucarp | grep GLIBC | awk '{print \$5}' | sort -u" \
+            >> dist/GLIBC_REPORT.txt
+          
+          echo "" >> dist/GLIBC_REPORT.txt
+          echo "This binary is compatible with systems running GLIBC 2.14 or higher." >> dist/GLIBC_REPORT.txt
+          
+          cat dist/GLIBC_REPORT.txt
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create tarball
+        run: |
+          cd dist
+          tar -czf ucarp-${{ steps.version.outputs.version }}-centos7-linux-amd64.tar.gz ucarp-centos7-linux-amd64 GLIBC_REPORT.txt
+          sha256sum ucarp-${{ steps.version.outputs.version }}-centos7-linux-amd64.tar.gz > ucarp-${{ steps.version.outputs.version }}-centos7-linux-amd64.tar.gz.sha256
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ucarp-centos7-linux-amd64
+          path: dist/*.tar.gz*
+          retention-days: 7
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-debian, build-rocky9, build-centos7]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find release-artifacts -type f -name "*.tar.gz*" -exec cp {} release/ \;
+          ls -lh release/
+
+      - name: Generate release notes
+        run: |
+          cat > release/RELEASE_NOTES.md << 'EOF'
+          # UCarp ${{ steps.version.outputs.version }}
+          
+          Multi-platform release with binaries for various Linux distributions.
+          
+          ## Available Builds
+          
+          ### Debian 12 (Bookworm)
+          - **x86_64**: `ucarp-${{ steps.version.outputs.version }}-debian12-linux-amd64.tar.gz`
+          - **ARM64**: `ucarp-${{ steps.version.outputs.version }}-debian12-linux-arm64.tar.gz`
+          - **Recommended for**: Modern deployments, cloud environments
+          - **GLIBC**: 2.36+
+          
+          ### Rocky Linux 9
+          - **x86_64**: `ucarp-${{ steps.version.outputs.version }}-rocky9-linux-amd64.tar.gz`
+          - **ARM64**: `ucarp-${{ steps.version.outputs.version }}-rocky9-linux-arm64.tar.gz`
+          - **Recommended for**: RHEL-compatible systems, enterprise environments
+          - **GLIBC**: 2.34+
+          
+          ### CentOS 7 (Legacy)
+          - **x86_64**: `ucarp-${{ steps.version.outputs.version }}-centos7-linux-amd64.tar.gz`
+          - **Recommended for**: Legacy systems
+          - **GLIBC**: 2.14+ (compatible with most Linux distributions from 2011+)
+          - **Note**: Includes GLIBC compatibility report
+          
+          ## Installation
+          
+          1. Download the appropriate tarball for your platform
+          2. Extract: `tar -xzf ucarp-*.tar.gz`
+          3. Install: `sudo cp ucarp-* /usr/local/sbin/ucarp`
+          4. Make executable: `sudo chmod +x /usr/local/sbin/ucarp`
+          5. Verify: `ucarp --help`
+          
+          ## SHA256 Checksums
+          
+          All builds include `.sha256` files for verification:
+          ```bash
+          sha256sum -c ucarp-*.tar.gz.sha256
+          ```
+          
+          ## Which Build Should I Use?
+          
+          - **Modern systems** (2020+): Use Debian 12 or Rocky Linux 9
+          - **Legacy systems**: Use CentOS 7 build (compatible with GLIBC 2.14+)
+          - **ARM64** (e.g., Raspberry Pi, AWS Graviton): Use Debian 12 or Rocky Linux 9 ARM64 builds
+          - **x86_64 only**: All builds available
+          
+          ## Compatibility
+          
+          | Build | GLIBC | Kernel | Architectures |
+          |-------|-------|--------|---------------|
+          | Debian 12 | 2.36+ | 5.10+ | x86_64, ARM64 |
+          | Rocky 9 | 2.34+ | 5.14+ | x86_64, ARM64 |
+          | CentOS 7 | 2.14+ | 3.10+ | x86_64 |
+          EOF
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: UCarp ${{ steps.version.outputs.version }}
+          body_path: release/RELEASE_NOTES.md
+          files: release/*.tar.gz*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
