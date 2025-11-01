@@ -1,7 +1,9 @@
 #ifndef __CARP_P_H__
 #define __CARP_P_H__ 1
+#include <stddef.h>
+#include "bsd-getopt_long.h"
 
-static const char *GETOPT_OPTIONS = "i:s:v:p:Pa:hb:k:x:nu:d:Dr:zf:Bo:SM";
+static const char *GETOPT_OPTIONS = "i:s:v:p:Pa:hb:k:x:nu:d:Dr:zf:Bo:SMT:E:";
 
 static struct option long_options[] = {
     { "interface", 1, NULL, 'i' },
@@ -24,6 +26,9 @@ static struct option long_options[] = {
     { "daemonize", 0, NULL, 'B' },
     { "ignoreifstate", 0, NULL, 'S' },
     { "nomcast", 0, NULL, 'M' },
+    { "transport", 1, NULL, 'T' },
+    { "peer", 1, NULL, 'E' },
+    { "tcp-port", 1, NULL, 1001 },
     { "passfile", 1, NULL, 'o' },
     { "xparam", 1, NULL, 'x' },
     { NULL, 0, NULL, 0 }

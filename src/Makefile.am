@@ -10,6 +10,10 @@ ucarp_SOURCES = \
 	ucarp.c \
 	ucarp.h \
 	carp.c \
+	carp_api.h \
+	transport.h \
+	transport_raw.c \
+	transport_tcp.c \
 	carp_p.h \
 	ucarp_p.h \
 	ip_carp.h \

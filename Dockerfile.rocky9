@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1
+# Modern Linux build using Rocky Linux 9
+# Supports both x86_64 and ARM64 natively
+
+FROM rockylinux:9 AS build
+
+# Enable CRB repository for development packages
+RUN dnf -y install dnf-plugins-core && \
+    dnf config-manager --set-enabled crb && \
+    dnf -y update
+
+# Install build dependencies
+RUN dnf -y install \
+    gcc gcc-c++ make autoconf automake libtool pkgconfig \
+    gettext gettext-devel libpcap-devel git which && \
+    dnf clean all
+
+WORKDIR /src
+COPY . .
+
+# Build UCarp - initialize gettext first
+RUN gettextize -f --copy && \
+    cp -n po/Makevars.template po/Makevars && \
+    autoreconf -fi && \
+    ./configure && \
+    make -j"$(nproc)" && \
+    make install DESTDIR=/out
+
+FROM rockylinux:9 AS runtime
+
+# Install runtime dependencies
+RUN dnf -y install libpcap gettext-libs && dnf clean all
+
+# Copy built binary
+COPY --from=build /out/usr/local/ /usr/local/
+
+ENTRYPOINT ["ucarp"]

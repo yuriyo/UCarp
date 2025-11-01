@@ -133,6 +133,28 @@ master.
 
 ------------------------ MULTICAST IP SELECTION -------------------------
 
+------------------------------ TCP TRANSPORT ------------------------------
+
+As an alternative to multicast/broadcast advertisements, UCARP can exchange
+advertisements over a direct TCP connection between two peers.
+
+Usage example for two hosts (10.1.1.1 and 10.1.1.2):
+
+ucarp --transport=tcp --peer=10.1.1.2 --tcp-port=9455 \
+      --interface=eth0 --srcip=10.1.1.1 --vhid=1 --pass=mypassword \
+      --addr=10.1.1.252 --upscript=/etc/vip-up.sh --downscript=/etc/vip-down.sh
+
+And on the second host:
+
+ucarp --transport=tcp --peer=10.1.1.1 --tcp-port=9455 \
+      --interface=eth0 --srcip=10.1.1.2 --vhid=1 --pass=mypassword \
+      --addr=10.1.1.252 --upscript=/etc/vip-up.sh --downscript=/etc/vip-down.sh
+
+Notes:
+- TCP transport is intended for 2-node deployments.
+- In TCP mode, multicast membership is skipped and adverts are sent via TCP.
+- Password is used to authenticate adverts (HMAC) as usual.
+
 The '--vhid' virtual IP identifier field only is only eight bits, providing up
 to 255 different virtual IPs on the same multicast group IP. For larger
 deployments, and more flexibility in allocation, ucarp can optionally use a

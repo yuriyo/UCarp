@@ -20,7 +20,9 @@ typedef unsigned int crypto_uint4;
 typedef long crypto_int4;
 typedef unsigned long crypto_uint4;
 #else
-# error Please report your architecture and OS type to j at ucarp dot org
+/* Fallback for unknown platforms */
+typedef int crypto_int4;
+typedef unsigned int crypto_uint4;
 #endif
 
 char *crypto_hash_sha1(const char *string, const int hex);

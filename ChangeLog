@@ -1,4 +1,12 @@
 
+* Version 1.6.0:
+ - Added TCP transport support for mesh network configurations.
+ - Implemented pluggable transport layer architecture (raw/TCP).
+ - Added Docker build support (CentOS 7, Debian 12, Rocky Linux 9).
+ - Added GitHub Actions CI/CD for multi-platform releases.
+ - Enhanced build system with multi-architecture support (x86_64, ARM64).
+By Yuriy Osadchyy.
+
 * Version 1.5.2:
  - Uses arc4random() if available.
  - Avoids adverts that might be twice as what they should be.

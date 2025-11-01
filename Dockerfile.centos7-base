@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1
+# Base CentOS 7 image with working vault repositories
+# Use this to create clean base images for building on CentOS 7
+
+FROM --platform=linux/amd64 centos:7
+
+# Configure vault repositories with SSL verification disabled for compatibility
+RUN cat > /etc/yum.repos.d/CentOS-Base.repo <<'EOF'
+[base]
+name=CentOS-7.9.2009 - Base
+baseurl=https://vault.centos.org/centos/7.9.2009/os/$basearch/
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
+sslverify=0
+
+[updates]
+name=CentOS-7.9.2009 - Updates
+baseurl=https://vault.centos.org/centos/7.9.2009/updates/$basearch/
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
+sslverify=0
+
+[extras]
+name=CentOS-7.9.2009 - Extras
+baseurl=https://vault.centos.org/centos/7.9.2009/extras/$basearch/
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-7
+sslverify=0
+EOF
+
+# Update base system
+RUN yum -y makecache fast && yum -y update && yum clean all
