@@ -13,6 +13,7 @@
 
 static int listen_fd = -1;
 static int conn_fd = -1;
+static int is_connector = 0;  /* 1 if we initiate connection, 0 if we accept */
 
 static int tcp_make_socket_nonblock(int fd) {
 #ifdef O_NONBLOCK
@@ -42,6 +43,12 @@ static int tcp_connect_peer(void) {
 
 static int tcp_init(void) {
 	if (!use_tcp_transport) return 0;
+	
+	/* Determine connection direction based on IP comparison.
+	 * Higher IP is the "connector", lower IP is the "acceptor".
+	 * This prevents both sides from creating cross-connections that get closed. */
+	is_connector = (ntohl(srcip.s_addr) > ntohl(peerip.s_addr));
+	
 	struct sockaddr_in sa; memset(&sa, 0, sizeof sa);
 	listen_fd = socket(AF_INET, SOCK_STREAM, 0);
 	if (listen_fd < 0) {
@@ -61,8 +68,8 @@ static int tcp_init(void) {
 		logfile(LOG_ERR, "tcp: listen failed: %s", strerror(errno));
 		return -1;
 	}
-	/* Opportunistically establish outgoing connection */
-	if (peerip.s_addr != 0) {
+	/* Only the connector initiates the outgoing connection */
+	if (is_connector && peerip.s_addr != 0) {
 		int fd = tcp_connect_peer();
 		if (fd >= 0) conn_fd = fd;
 	}
@@ -76,12 +83,20 @@ static int tcp_send_frame(const unsigned char *buf, size_t len) {
 	hdr[0]='U'; hdr[1]='C'; hdr[2]='A'; hdr[3]='R';
 	hdr[4]=1; hdr[5]=vhid; hdr[6]=(unsigned char)(len>>8); hdr[7]=(unsigned char)(len&0xff);
 	ssize_t n = send(conn_fd, hdr, sizeof hdr, 0);
-	if (n != (ssize_t)sizeof hdr) return -1;
+	if (n != (ssize_t)sizeof hdr) {
+		close(conn_fd);
+		conn_fd = -1;
+		return -1;
+	}
 	if (len == 0) return 0;
 	const unsigned char *p = buf; size_t left = len;
 	while (left > 0) {
 		ssize_t w = send(conn_fd, p, left, 0);
-		if (w <= 0) return -1;
+		if (w <= 0) {
+			close(conn_fd);
+			conn_fd = -1;
+			return -1;
+		}
 		p += w; left -= (size_t)w;
 	}
 	return 0;
@@ -94,15 +109,29 @@ static int tcp_send_advert(const struct carp_header *ch) {
 static int tcp_handle_one_frame(void) {
 	unsigned char hdr[8];
 	ssize_t n = recv(conn_fd, hdr, sizeof hdr, MSG_WAITALL);
-	if (n <= 0) return -1;
+	if (n <= 0) {
+		close(conn_fd);
+		conn_fd = -1;
+		return -1;
+	}
 	if (n != 8 || hdr[0]!='U' || hdr[1]!='C' || hdr[2]!='A' || hdr[3]!='R' || hdr[4]!=1 || hdr[5]!=vhid) {
+		close(conn_fd);
+		conn_fd = -1;
 		return -1;
 	}
 	unsigned int len = ((unsigned)hdr[6]<<8) | hdr[7];
-	if (len != sizeof(struct carp_header)) return -1;
+	if (len != sizeof(struct carp_header)) {
+		close(conn_fd);
+		conn_fd = -1;
+		return -1;
+	}
     struct carp_header ch;
 	ssize_t m = recv(conn_fd, &ch, sizeof ch, MSG_WAITALL);
-	if (m != (ssize_t)sizeof ch) return -1;
+	if (m != (ssize_t)sizeof ch) {
+		close(conn_fd);
+		conn_fd = -1;
+		return -1;
+	}
     /* Hand off to carp logic (does full validation and state transitions) */
     carp_process_advert_from_ch(&ch, peerip);
 	return 1;
@@ -115,8 +144,14 @@ static int tcp_accept_if_needed(void) {
 		struct sockaddr_in sa; socklen_t sl = sizeof sa;
 		int fd = accept(listen_fd, (struct sockaddr *)&sa, &sl);
 		if (fd >= 0) {
-			if (conn_fd >= 0) close(conn_fd);
-			conn_fd = fd;
+			/* Only accept if we're the acceptor, or if we don't have a connection yet */
+			if (!is_connector || conn_fd < 0) {
+				if (conn_fd >= 0) close(conn_fd);
+				conn_fd = fd;
+			} else {
+				/* We're the connector and already have an outbound connection - reject */
+				close(fd);
+			}
 		}
 	}
 	return 0;
@@ -125,6 +160,13 @@ static int tcp_accept_if_needed(void) {
 static int tcp_poll(int timeout_ms) {
 	(void) timeout_ms;
 	tcp_accept_if_needed();
+	
+	/* If we're the connector and lost the connection, try to reconnect */
+	if (is_connector && conn_fd < 0 && peerip.s_addr != 0) {
+		int fd = tcp_connect_peer();
+		if (fd >= 0) conn_fd = fd;
+	}
+	
 	if (conn_fd >= 0) {
 		struct pollfd p = { conn_fd, POLLIN, 0 };
 		if (poll(&p, 1, 0) == 1 && (p.revents & POLLIN)) {
